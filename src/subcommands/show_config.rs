@@ -129,7 +129,8 @@ pub fn show_config(config: &config::Config, writer: &mut dyn Write) -> std::io::
     syntax-theme                  = {syntax_theme}
     width                         = {width}
     tabs                          = {tab_width}
-    word-diff-regex               = {tokenization_regex}",
+    word-diff-regex               = {tokenization_regex}
+    word-diff-engine              = {word_diff_engine}",
         diff_stat_align_width = config.diff_stat_align_width,
         max_line_distance = config.max_line_distance,
         max_line_length = config.max_line_length,
@@ -161,6 +162,10 @@ pub fn show_config(config: &config::Config, writer: &mut dyn Write) -> std::io::
         },
         tab_width = config.tab_cfg.width(),
         tokenization_regex = format_option_value(config.tokenization_regex.to_string()),
+        word_diff_engine = match config.word_diff_engine {
+            cli::WordDiffEngine::Delta => "delta",
+            cli::WordDiffEngine::Refined => "refined",
+        },
     )?;
     Ok(())
 }

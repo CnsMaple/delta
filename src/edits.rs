@@ -4,7 +4,10 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::align;
+use crate::delta::State;
 use crate::minusplus::MinusPlus;
+use crate::style::Style;
+use crate::refined_diff;
 
 /// Infer the edit operations responsible for the differences between a collection of old and new
 /// lines. A "line" is a string. An annotated line is a Vec of (op, &str) pairs, where the &str
@@ -133,6 +136,158 @@ pub fn make_lines_have_homolog(
             .map(|(m, _)| m.is_some())
             .collect(),
     )
+}
+
+/// VSCode-accurate word-diff for a whole change block, with line widening.
+///
+/// Treats the collected minus run vs plus run as ONE character-level change
+/// block (see [`refined_diff`]), then renders each line into a WIDENED owned
+/// `String`: a mid-line empty-change bar becomes a one-cell placeholder (a
+/// space) so the marker no longer recolors a real content character (e.g. a
+/// trailing `)` or a line-initial `r`). Leading/trailing bars are dropped (the
+/// counterpart line already has its own row in side-by-side).
+///
+/// Returns owned widened `(String, State)` lines per side, per-line style ranges
+/// `(Style, byte_start, byte_end)` into those strings, and the positional line
+/// alignment. The caller builds `LineSections` (borrowing the widened strings)
+/// and computes syntax highlighting from the widened strings, so delta's
+/// per-character superimpose invariant stays intact.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+pub fn refined_widen<'a>(
+    minus_lines: &[&'a str],
+    plus_lines: &[&'a str],
+    minus_styles: &[Style],
+    plus_styles: &[Style],
+    minus_emph: Style,
+    plus_emph: Style,
+    minus_states: &[State],
+    plus_states: &[State],
+) -> (
+    Vec<(String, State)>,
+    Vec<(String, State)>,
+    Vec<Vec<(Style, usize, usize)>>,
+    Vec<Vec<(Style, usize, usize)>>,
+    Vec<(Option<usize>, Option<usize>)>,
+) {
+    let (mut del_spans, mut ins_spans) = refined_diff::block_diff_runs(minus_lines, plus_lines);
+
+    // Junction placeholder: when one side has more lines than the other AND those
+    // extra lines are a reflow of content that exists on the other side (a line was
+    // split/joined), mark the end of the last positionally-paired line on the longer
+    // side with a placeholder in the SHORTER side's colour. A genuinely new line
+    // (e.g. an added import) is NOT a reflow, so it gets no junction marker.
+    if ins_spans.len() > del_spans.len()
+        && is_reflow(&plus_lines[minus_lines.len()..], minus_lines)
+    {
+        let idx = del_spans.len().saturating_sub(1).min(ins_spans.len() - 1);
+        push_junction(&mut ins_spans[idx], refined_diff::Mark::Del);
+    }
+    if del_spans.len() > ins_spans.len()
+        && is_reflow(&minus_lines[plus_lines.len()..], plus_lines)
+    {
+        let idx = ins_spans.len().saturating_sub(1).min(del_spans.len() - 1);
+        push_junction(&mut del_spans[idx], refined_diff::Mark::Ins);
+    }
+
+    // block_diff_runs already decides which whitespace marks to keep (pure-indent
+    // pairs, newline boundaries, real insertions); here we widen each line and pick
+    // the emphasis colour from the span's own mark (Del -> minus emph, Ins -> plus
+    // emph), so a junction placeholder can be coloured as a deletion on the plus side.
+    let widen_side = |spans: Vec<Vec<refined_diff::DiffSpan>>,
+                      styles: &[Style],
+                      minus_emph: Style,
+                      plus_emph: Style,
+                      states: &[State]|
+     -> (Vec<(String, State)>, Vec<Vec<(Style, usize, usize)>>) {
+        let mut lines_out = Vec::with_capacity(spans.len());
+        let mut ranges_out = Vec::with_capacity(spans.len());
+        for (i, spans) in spans.into_iter().enumerate() {
+            let w = refined_diff::widen_line(&spans);
+            let base = styles[i];
+            let ranges: Vec<(Style, usize, usize)> = w
+                .ranges
+                .into_iter()
+                .map(|(m, a, b)| {
+                    let st = match m {
+                        Some(refined_diff::Mark::Del) => minus_emph,
+                        Some(refined_diff::Mark::Ins) => plus_emph,
+                        None => base,
+                    };
+                    (st, a, b)
+                })
+                .collect();
+            lines_out.push((w.text, states[i].clone()));
+            ranges_out.push(ranges);
+        }
+        (lines_out, ranges_out)
+    };
+
+    let (widened_minus, ranges_minus) =
+        widen_side(del_spans, minus_styles, minus_emph, plus_emph, minus_states);
+    let (widened_plus, ranges_plus) =
+        widen_side(ins_spans, plus_styles, minus_emph, plus_emph, plus_states);
+
+    // Positional pairing, as VSCode lays out a change block.
+    let mut line_alignment: Vec<(Option<usize>, Option<usize>)> = Vec::new();
+    let n_pair = minus_lines.len().min(plus_lines.len());
+    for i in 0..n_pair {
+        line_alignment.push((Some(i), Some(i)));
+    }
+    for i in n_pair..minus_lines.len() {
+        line_alignment.push((Some(i), None));
+    }
+    for j in n_pair..plus_lines.len() {
+        line_alignment.push((None, Some(j)));
+    }
+
+    (
+        widened_minus,
+        widened_plus,
+        ranges_minus,
+        ranges_plus,
+        line_alignment,
+    )
+}
+
+/// True when every `extra` line is a reflow of content already present in `other`
+/// (its trimmed text is a substring of the other run's trimmed content). Used to
+/// distinguish a split/join (reflow -> junction) from a genuinely new line.
+fn is_reflow<'a>(extra: &[&'a str], other: &[&'a str]) -> bool {
+    if extra.is_empty() {
+        return false;
+    }
+    let hay: String = other.iter().map(|l| format!("{}\n", l.trim())).collect();
+    extra.iter().all(|l| {
+        let t = l.trim();
+        !t.is_empty() && hay.contains(t)
+    })
+}
+
+/// Insert a placeholder bar at a line's content end (before its trailing newline),
+/// used for the reflow junction marker. Splits the last span's trailing '\n' off so
+/// the placeholder sits at the visible end of the line, not after the newline.
+fn push_junction(spans: &mut Vec<refined_diff::DiffSpan>, mark: refined_diff::Mark) {
+    let bar = refined_diff::DiffSpan {
+        text: "",
+        mark: Some(mark),
+        spans_line: false,
+    };
+    if let Some(last) = spans.last_mut() {
+        if last.mark.is_none() && last.text.ends_with('\n') && last.text.len() > 1 {
+            let cut = last.text.len() - 1; // '\n' is a single byte
+            let nl = &last.text[cut..];
+            last.text = &last.text[..cut];
+            spans.push(bar);
+            spans.push(refined_diff::DiffSpan {
+                text: nl,
+                mark: None,
+                spans_line: false,
+            });
+            return;
+        }
+    }
+    spans.push(bar);
 }
 
 /// Split line into tokens for alignment. The alignment algorithm aligns sequences of substrings;

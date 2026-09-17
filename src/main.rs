@@ -18,6 +18,7 @@ mod parse_style;
 mod parse_styles;
 mod style;
 mod utils;
+mod refined_diff;
 mod wrapping;
 
 mod subcommands;

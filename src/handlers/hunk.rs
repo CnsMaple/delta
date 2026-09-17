@@ -119,6 +119,16 @@ impl StateMachine<'_> {
                 // The first character here could be e.g. '\' from '\ No newline at end of file'. This
                 // is not a hunk line, but the parser does not have a more accurate state corresponding
                 // to this.
+                if self.config.word_diff_engine == cli::WordDiffEngine::Refined
+                    && self.line.starts_with('\\')
+                {
+                    // The refined engine keeps a deletion run and the following addition
+                    // run in ONE change block across the no-newline marker (the marker is
+                    // transparent to the diff). Do not flush the buffers, emit, or change
+                    // state, so the block stays contiguous and the deletion pairs with the
+                    // addition.
+                    return Ok(true);
+                }
                 self.painter.paint_buffered_minus_and_plus_lines();
                 self.painter
                     .output_buffer

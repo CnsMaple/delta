@@ -466,6 +466,21 @@ pub struct Opt {
     /// Git's --color-moved feature. Set this to "false" to disable this behavior.
     pub inspect_raw_lines: String,
 
+    #[arg(
+        long = "word-diff-engine",
+        default_value = "delta",
+        value_name = "delta|refined",
+        value_parser = ["delta", "refined"],
+    )]
+    /// Algorithm used to infer word-level (intra-line) changes within a change block.
+    ///
+    /// "delta" (default) uses delta's token-level Levenshtein edit-inference. "refined"
+    /// treats each hunk's whole deletion run against its addition run as a single
+    /// character-level change block, based on VSCode's diff algorithm (DP/LCS + Myers
+    /// plus the refine heuristic chain), with precise-mode tweaks (short common runs are
+    /// kept, and whitespace/indentation changes are marked).
+    pub word_diff_engine: String,
+
     #[arg(long = "keep-plus-minus-markers")]
     /// Prefix added/removed lines with a +/- character, as git does.
     ///
@@ -1181,6 +1196,7 @@ pub struct ComputedValues {
     pub background_color_extends_to_terminal_width: bool,
     pub decorations_width: Width,
     pub inspect_raw_lines: InspectRawLines,
+    pub word_diff_engine: WordDiffEngine,
     pub color_mode: ColorMode,
     pub paging_mode: PagingMode,
     pub syntax_set: SyntaxSet,
@@ -1200,6 +1216,13 @@ pub enum InspectRawLines {
     True,
     #[default]
     False,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WordDiffEngine {
+    #[default]
+    Delta,
+    Refined,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]

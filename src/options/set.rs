@@ -170,6 +170,7 @@ pub fn set_options(
             hyperlinks_file_link_format,
             inline_hint_style,
             inspect_raw_lines,
+            word_diff_engine,
             keep_plus_minus_markers,
             line_buffer_size,
             map_styles,
@@ -240,6 +241,7 @@ pub fn set_options(
     theme::set__color_mode__syntax_theme__syntax_set(opt, assets);
     opt.computed.inspect_raw_lines =
         cli::InspectRawLines::from_str(&opt.inspect_raw_lines).unwrap();
+    opt.computed.word_diff_engine = cli::WordDiffEngine::from_str(&opt.word_diff_engine).unwrap();
     opt.computed.paging_mode = parse_paging_mode(&opt.paging_mode);
 
     // --color-only is used for interactive.diffFilter (git add -p). side-by-side, and
@@ -539,6 +541,21 @@ impl FromStr for cli::InspectRawLines {
             _ => {
                 fatal(format!(
                     r#"Invalid value for inspect-raw-lines option: {s}. Valid values are "true", and "false"."#,
+                ));
+            }
+        }
+    }
+}
+
+impl FromStr for cli::WordDiffEngine {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "delta" => Ok(Self::Delta),
+            "refined" => Ok(Self::Refined),
+            _ => {
+                fatal(format!(
+                    r#"Invalid value for word-diff-engine option: {s}. Valid values are "delta", and "refined"."#,
                 ));
             }
         }

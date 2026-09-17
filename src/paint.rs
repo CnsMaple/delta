@@ -610,11 +610,94 @@ pub fn paint_minus_and_plus_lines(
     output_buffer: &mut String,
     config: &config::Config,
 ) {
-    let syntax_style_sections = MinusPlus::new(
-        get_syntax_style_sections_for_lines(lines[Minus], highlighter.as_mut(), config),
-        get_syntax_style_sections_for_lines(lines[Plus], highlighter.as_mut(), config),
-    );
-    let (mut diff_style_sections, line_alignment) = get_diff_style_sections(&lines, config);
+    if config.word_diff_engine == crate::cli::WordDiffEngine::Refined {
+        // Refined engine: widen lines so empty-change bars become their own
+        // placeholder cell. Syntax highlighting is computed from the WIDENED
+        // lines so it stays character-for-character consistent with the diff
+        // sections (delta superimposes them).
+        let m_lines: Vec<&str> = lines[Minus].iter().map(|(s, _)| s.as_str()).collect();
+        let p_lines: Vec<&str> = lines[Plus].iter().map(|(s, _)| s.as_str()).collect();
+        let m_styles: Vec<Style> = lines[Minus]
+            .iter()
+            .map(|(_, st)| *config.get_style(st))
+            .collect();
+        let p_styles: Vec<Style> = lines[Plus]
+            .iter()
+            .map(|(_, st)| *config.get_style(st))
+            .collect();
+        let m_states: Vec<State> = lines[Minus].iter().map(|(_, st)| st.clone()).collect();
+        let p_states: Vec<State> = lines[Plus].iter().map(|(_, st)| st.clone()).collect();
+
+        let (wm, wp, rm, rp, line_alignment) = edits::refined_widen(
+            &m_lines,
+            &p_lines,
+            &m_styles,
+            &p_styles,
+            config.minus_emph_style,
+            config.plus_emph_style,
+            &m_states,
+            &p_states,
+        );
+
+        let syntax_style_sections = MinusPlus::new(
+            get_syntax_style_sections_for_lines(&wm, highlighter.as_mut(), config),
+            get_syntax_style_sections_for_lines(&wp, highlighter.as_mut(), config),
+        );
+        let diff_style_sections = MinusPlus::new(
+            wm.iter()
+                .zip(&rm)
+                .map(|((s, _), rg)| {
+                    rg.iter()
+                        .map(|(st, a, b)| (*st, &s[*a..*b]))
+                        .collect::<LineSections<Style>>()
+                })
+                .collect(),
+            wp.iter()
+                .zip(&rp)
+                .map(|((s, _), rg)| {
+                    rg.iter()
+                        .map(|(st, a, b)| (*st, &s[*a..*b]))
+                        .collect::<LineSections<Style>>()
+                })
+                .collect(),
+        );
+        finish_minus_and_plus(
+            MinusPlus::new(&wm, &wp),
+            syntax_style_sections,
+            diff_style_sections,
+            line_alignment,
+            line_numbers_data,
+            output_buffer,
+            config,
+        );
+    } else {
+        let syntax_style_sections = MinusPlus::new(
+            get_syntax_style_sections_for_lines(lines[Minus], highlighter.as_mut(), config),
+            get_syntax_style_sections_for_lines(lines[Plus], highlighter.as_mut(), config),
+        );
+        let (diff_style_sections, line_alignment) = get_diff_style_sections(&lines, config);
+        finish_minus_and_plus(
+            lines,
+            syntax_style_sections,
+            diff_style_sections,
+            line_alignment,
+            line_numbers_data,
+            output_buffer,
+            config,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_minus_and_plus<'a>(
+    lines: MinusPlus<&'a Vec<(String, State)>>,
+    syntax_style_sections: MinusPlus<Vec<LineSections<'a, SyntectStyle>>>,
+    mut diff_style_sections: MinusPlus<Vec<LineSections<'a, Style>>>,
+    line_alignment: Vec<(Option<usize>, Option<usize>)>,
+    line_numbers_data: &mut Option<LineNumbersData>,
+    output_buffer: &mut String,
+    config: &config::Config,
+) {
     let lines_have_homolog = edits::make_lines_have_homolog(&line_alignment);
     Painter::update_diff_style_sections(
         lines[Minus],

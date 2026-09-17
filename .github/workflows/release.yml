@@ -1,9 +1,17 @@
-name: Continuous Deployment
+name: Release
+
+# Fork-only release workflow: build multi-platform binaries and upload them to a
+# GitHub Release on a version tag push. Derived from the upstream cd.yml but with
+# the publish-to-cargo / publish-to-winget / verify-release jobs removed (a fork
+# must not publish to the upstream crate or winget id).
 
 on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
 
 jobs:
   publish:
@@ -81,36 +89,9 @@ jobs:
       - name: Releasing assets
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
           files: |
             delta-*-${{ matrix.job.target }}.*
             git-delta*.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  verify-release:
-    needs: publish
-    uses: ./.github/workflows/verify-release.yml
-    with:
-      version: ${{ github.ref_name }}
-    secrets: inherit
-
-  publish-to-cargo:
-    name: Publishing to Cargo
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo publish --token ${{ secrets.CARGO_API_KEY }} --allow-dirty
-
-  publish-to-winget:
-    name: Publish to WinGet
-    runs-on: ubuntu-latest
-    needs: publish
-    steps:
-      - uses: vedantmgoyal2009/winget-releaser@v2
-        with:
-          identifier: dandavison.delta
-          version: ${{ github.ref_name }}
-          installers-regex: '-pc-windows-msvc\.zip$'
-          token: ${{ secrets.WINGET_TOKEN }}

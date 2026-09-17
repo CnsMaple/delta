@@ -91,6 +91,7 @@ pub struct Config {
     pub hyperlinks: bool,
     pub inline_hint_style: Style,
     pub inspect_raw_lines: cli::InspectRawLines,
+    pub word_diff_engine: cli::WordDiffEngine,
     pub keep_plus_minus_markers: bool,
     pub line_buffer_size: usize,
     pub line_fill_method: BgFillMethod,
@@ -363,6 +364,7 @@ impl From<cli::Opt> for Config {
             hyperlinks_commit_link_format: opt.hyperlinks_commit_link_format,
             hyperlinks_file_link_format: opt.hyperlinks_file_link_format,
             inspect_raw_lines: opt.computed.inspect_raw_lines,
+            word_diff_engine: opt.computed.word_diff_engine,
             inline_hint_style: styles["inline-hint-style"],
             keep_plus_minus_markers: opt.keep_plus_minus_markers,
             line_fill_method: if !opt.computed.stdout_is_term && !TESTING {
